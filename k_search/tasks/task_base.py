@@ -168,6 +168,7 @@ class SupportedLanguages(str, Enum):
     TRITON = "triton"
     CUDA = "cuda"
     CPP = "cpp"
+    MLX = "mlx"
 
 
 @dataclass
@@ -379,6 +380,7 @@ def solution_from_json_dict(d: dict[str, Any]) -> Solution:
         "triton": SupportedLanguages.TRITON,
         "cuda": SupportedLanguages.CUDA,
         "cpp": SupportedLanguages.CPP,
+        "mlx": SupportedLanguages.MLX,
     }
     lang = lang_map.get(lang_s, SupportedLanguages.PYTHON)
 

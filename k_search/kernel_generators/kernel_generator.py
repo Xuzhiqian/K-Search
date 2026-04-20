@@ -66,6 +66,7 @@ class KernelGenerator:
             "python": SupportedLanguages.PYTHON,
             "triton": SupportedLanguages.TRITON,
             "cuda": SupportedLanguages.CUDA,
+            "mlx": SupportedLanguages.MLX,
         }
         if self.language.lower() in language_map:
             return language_map[self.language.lower()]
