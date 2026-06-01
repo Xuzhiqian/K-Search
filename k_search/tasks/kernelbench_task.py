@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
+from k_search.kernel_generators.kernel_generator_prompts import NO_TORCH_FALLBACK_WARNING
 from k_search.tasks.task_base import (
     BuildSpec,
     EvalResult,
@@ -150,12 +151,16 @@ class KernelBenchTask:
         # Proper capitalization for display
         if backend == "triton":
             backend_display = "Triton"
-            format_text = """Your code should define a `ModelNew` class with the same interface as `Model`.
-You can include Triton kernels using the `@triton.jit` decorator and launch them appropriately."""
+            format_text = f"""Your code should define a `ModelNew` class with the same interface as `Model`.
+You can include Triton kernels using the `@triton.jit` decorator and launch them appropriately.
+
+{NO_TORCH_FALLBACK_WARNING}"""
         else:  # cuda or default
             backend_display = "CUDA"
-            format_text = """Your code should define a `ModelNew` class with the same interface as `Model`.
-You can include inline CUDA code using PyTorch's custom CUDA extensions."""
+            format_text = f"""Your code should define a `ModelNew` class with the same interface as `Model`.
+You can include inline CUDA code using PyTorch's custom CUDA extensions.
+
+{NO_TORCH_FALLBACK_WARNING}"""
         
         spec = f"""# KernelBench Optimization Task
 

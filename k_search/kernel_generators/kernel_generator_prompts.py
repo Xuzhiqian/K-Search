@@ -4,12 +4,15 @@ This file contains the prompts for baseline agent generation.
 
 from __future__ import annotations
 
+# Shared warning about avoiding torch fallbacks
+NO_TORCH_FALLBACK_WARNING = """**IMPORTANT**: Avoid using torch functions as fallbacks in your implementation. Do not use try/catch blocks that fall back to torch operations. Your custom kernel should be the primary implementation path and handle all cases directly."""
+
 # CUDA-specific hints
 # Note: keep these hints generic (avoid naming specific low-level instructions).
-CUDA_OPTIMIZATION_HINTS = "** You MUST use MMA to utilize the tensor cores on H100! ** For each round, you can see your current best solution and the previous round's summary, therefore you can implement the kernel step by step."
+CUDA_OPTIMIZATION_HINTS = f"** You MUST use MMA to utilize the tensor cores on H100! ** For each round, you can see your current best solution and the previous round's summary, therefore you can implement the kernel step by step."
 
 # Triton-appropriate subset
-TRITON_OPTIMIZATION_HINTS = """
+TRITON_OPTIMIZATION_HINTS = f"""
 ** For each round, you can see your current best solution and the previous round's summary, therefore you can implement the kernel step by step.
 """
 
