@@ -9,7 +9,7 @@ PathLike = Union[str, Path]
 
 def get_ksearch_artifacts_dir(*, base_dir: Optional[PathLike] = None, task_name: Optional[str] = None) -> Path:
     """
-    Default k-search artifacts directory (independent of flashinfer-bench dataset paths).
+    Default K-Search artifacts directory.
     """
     root = Path(base_dir) if base_dir else (Path.cwd() / ".ksearch")
     root = root.expanduser().resolve()

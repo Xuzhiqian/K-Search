@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import os
 
-import openai
+try:
+    import openai  # type: ignore
+except Exception:  # pragma: no cover
+    openai = None  # type: ignore
 from .kernel_generator_prompts import (
     get_optimization_prompt_from_definition_text,
     get_prompt_from_definition_text,
@@ -28,8 +31,8 @@ class KernelGenerator:
     def __init__(
         self,
         model_name: str,
-        language: str = "triton",
-        target_gpu: str = "H100",
+        language: str = "cpp",
+        target_gpu: str = "armv8-a",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         reasoning_effort: str = "medium",  # only used for openai reasoning models
@@ -37,8 +40,8 @@ class KernelGenerator:
         """
         Args:
             model_name: Name of the model to use (e.g., "gpt-5")
-            language: Programming language for code generation (default: "triton")
-            target_gpu: Target GPU architecture (e.g., "H100", "B200", "RTX4090", default: "H100")
+            language: Programming language for code generation (default: "cpp")
+            target_gpu: Target CPU architecture/features (e.g., "armv8-a+simd", default: "armv8-a")
             api_key: API key (if None, uses LLM_API_KEY environment variable)
             base_url: Base URL for the API (need to provide for non-openai api models)
             reasoning_effort: Reasoning effort for OpenAI reasoning models ("low", "medium", "high", default: "medium")
@@ -59,14 +62,16 @@ class KernelGenerator:
         if base_url is not None:
             client_kwargs["base_url"] = base_url
 
+        if openai is None:
+            raise RuntimeError("The OpenAI Python SDK is required for generation. Install the `openai` package.")
         self.client = openai.OpenAI(**client_kwargs)
 
     def _get_supported_language(self) -> SupportedLanguages:
         language_map = {
             "python": SupportedLanguages.PYTHON,
-            "triton": SupportedLanguages.TRITON,
-            "cuda": SupportedLanguages.CUDA,
-            "mlx": SupportedLanguages.MLX,
+            "c": SupportedLanguages.C,
+            "c++": SupportedLanguages.CPP,
+            "cpp": SupportedLanguages.CPP,
         }
         if self.language.lower() in language_map:
             return language_map[self.language.lower()]
@@ -81,8 +86,8 @@ class KernelGenerator:
 
         patterns = {
             "kernel.h": r'<header_file name="kernel\.h">(.*?)</header_file>',
-            "kernel.cu": r'<cuda_file name="kernel\.cu">(.*?)</cuda_file>',
-            "main.cpp": r'<cpp_file name="main\.cpp">(.*?)</cpp_file>',
+            "kernel.cpp": r'<source_file name="kernel\.cpp">(.*?)</source_file>',
+            "main.cpp": r'<main_file name="main\.cpp">(.*?)</main_file>',
         }
 
         for filename, pattern in patterns.items():
@@ -96,14 +101,14 @@ class KernelGenerator:
         return files
 
     def _clean_generated_code(self, code: str) -> str:
-        """Clean up generated code. For CUDA, parse XML and return dict. For others, clean Python syntax."""
-        if self.language.lower() == "cuda":
+        """Clean up generated code. For C/C++, parse XML and return dict. For Python, clean fenced code."""
+        if self.language.lower() in ("c", "cpp", "c++"):
             return self._parse_xml_files(code)
 
-        # For non-CUDA languages (triton, python), clean up markdown and hex floats
+        # For Python, clean up markdown and hex floats.
         if "```" in code:
             # Prefer parsing the first fenced block anywhere in the response. This mirrors the
-            # CUDA path's "structured output" parsing and is robust to models emitting extra text.
+            # C/C++ path's structured output parsing is robust to models emitting extra text.
             m = re.search(r"```[a-zA-Z0-9_+-]*\n([\s\S]*?)\n```", str(code or ""))
             if m:
                 code = (m.group(1) or "").strip()
@@ -145,12 +150,12 @@ class KernelGenerator:
         return code
 
     def _generate_code_from_prompt(self, prompt: str):
-        # If we fail to parse CUDA XML (missing kernel.h/kernel.cu/main.cpp), retry generation.
+        # If we fail to parse C/C++ XML (missing kernel.h/kernel.cpp/main.cpp), retry generation.
         max_parse_retries = 5
-        is_cuda = (self.language or "").lower() == "cuda"
+        is_cpp = (self.language or "").lower() in ("c", "cpp", "c++")
 
         last_err: Exception | None = None
-        for attempt in range(1, (max_parse_retries if is_cuda else 1) + 1):
+        for attempt in range(1, (max_parse_retries if is_cpp else 1) + 1):
             try:
                 effective_prompt = prompt
 
@@ -167,11 +172,11 @@ class KernelGenerator:
 
                 cleaned_code = self._clean_generated_code(generated_code)
 
-                if is_cuda:
-                    # cleaned_code should be a dict of required files for CUDA.
+                if is_cpp:
+                    # cleaned_code should be a dict of required C/C++ files.
                     if not isinstance(cleaned_code, dict):
-                        raise ValueError("CUDA generation did not return a parsed file dict")
-                    required = ("kernel.h", "kernel.cu", "main.cpp")
+                        raise ValueError("C/C++ generation did not return a parsed file dict")
+                    required = ("kernel.h", "kernel.cpp", "main.cpp")
                     missing = [k for k in required if (k not in cleaned_code) or (not str(cleaned_code.get(k, "")).strip())]
                     if missing:
                         raise ValueError(f"missing required XML files: {missing}")
@@ -180,8 +185,8 @@ class KernelGenerator:
 
             except Exception as e:
                 last_err = e
-                if is_cuda and attempt < max_parse_retries:
-                    print(f"[WARN] CUDA XML parse failed ({e}); retrying generation ({attempt}/{max_parse_retries})...")
+                if is_cpp and attempt < max_parse_retries:
+                    print(f"[WARN] C/C++ XML parse failed ({e}); retrying generation ({attempt}/{max_parse_retries})...")
                     continue
                 print(f"Error while generating code: {e}")
                 raise
@@ -230,15 +235,15 @@ class KernelGenerator:
             )
 
         # Handle different code formats based on language
-        if self.language.lower() == "cuda" and isinstance(cleaned_code, dict):
-            # For CUDA, we have multiple files
+        if self.language.lower() in ("c", "cpp", "c++") and isinstance(cleaned_code, dict):
+            # For C/C++, we have multiple files.
             sources = []
             for filename, content in cleaned_code.items():
                 sources.append(SourceFile(path=filename, content=content))
 
-            entry_point = "main.cpp::run"
+            entry_point = "kernel.cpp::kernel_entry"
         else:
-            # For single-file languages (triton, python)
+            # For single-file Python helpers.
             code_txt = raw_code if isinstance(raw_code, str) and raw_code.strip() else cleaned_code
             if isinstance(code_txt, dict):
                 code_txt = next(iter(code_txt.values()))
@@ -251,7 +256,7 @@ class KernelGenerator:
             author=self.model_name,
             spec=BuildSpec(
                 language=self._get_supported_language(),
-                target_hardware=[str(self.target_gpu or "H100")],
+                target_hardware=[str(self.target_gpu or "armv8-a")],
                 entry_point=entry_point,
             ),
             sources=sources,

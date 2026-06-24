@@ -26,8 +26,7 @@ LLMCall = Callable[[str], str]
 def _extract_reference_from_definition_text(definition_text: str) -> str:
     """
     Best-effort extraction of the reference implementation from a rendered definition text.
-    This preserves the old behavior of embedding reference excerpts into WM root notes
-    without requiring access to a flashinfer-bench Definition object.
+    This embeds reference excerpts into WM root notes without requiring backend-specific objects.
     """
     s = str(definition_text or "")
     marker = "Reference Implementation:"

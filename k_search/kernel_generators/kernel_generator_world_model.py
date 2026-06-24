@@ -90,7 +90,7 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
         self,
         *args,
         enable_world_model: bool = True,
-        # Default higher to allow passing full kernel.cu into WM prompts (we avoid truncating code).
+        # Default higher to allow passing full kernel source into WM prompts (we avoid truncating code).
         world_model_max_chars: int = 50000,
         artifacts_dir: str | None = None,
         wm_max_difficulty: int | None = None,
@@ -173,7 +173,7 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
         def _wm_guardrail(s: Any) -> str:
             """
             Emergency-only guardrail: avoid pathological multi-MB prompts.
-            This is NOT a normal cap; typical kernel.cu should pass through unchanged.
+            This is NOT a normal cap; typical kernel source should pass through unchanged.
             """
             try:
                 ss = s if isinstance(s, str) else str(s or "")
@@ -372,17 +372,17 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
             except Exception:
                 return ""
 
-        def _emit_kernel_cu(cleaned: object) -> None:
-            """Print the generated CUDA kernel.cu to stdout (bounded for readability)."""
-            if (self.language or "").lower() != "cuda":
+        def _emit_kernel_cpp(cleaned: object) -> None:
+            """Print the generated kernel.cpp to stdout (bounded for readability)."""
+            if (self.language or "").lower() not in ("c", "cpp", "c++"):
                 return
             if not isinstance(cleaned, dict):
                 return
-            cu = cleaned.get("kernel.cu")
-            if not isinstance(cu, str) or not cu.strip():
+            cpp = cleaned.get("kernel.cpp")
+            if not isinstance(cpp, str) or not cpp.strip():
                 return
-            s = cu.strip()
-            _emit("\n[GENERATED kernel.cu]\n" + s + "\n[/GENERATED kernel.cu]\n")
+            s = cpp.strip()
+            _emit("\n[GENERATED kernel.cpp]\n" + s + "\n[/GENERATED kernel.cpp]\n")
 
         def _code_for_wm_from_raw(raw: Any) -> str:
             return task.code_for_world_model_from_raw(raw=raw, language=self.language)
@@ -390,7 +390,7 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
         def _wm_guardrail(s: Any) -> str:
             """
             Emergency-only guardrail: avoid pathological multi-MB prompts.
-            This is NOT a normal cap; typical kernel.cu should pass through unchanged.
+            This is NOT a normal cap; typical kernel source should pass through unchanged.
             """
             try:
                 ss = s if isinstance(s, str) else str(s or "")
@@ -684,10 +684,10 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
                 code_result = self._generate_code_from_prompt(prompt)
                 current_code = code_result["cleaned"]
                 current_raw_code = code_result["raw"]
-                _emit_kernel_cu(current_code)
+                _emit_kernel_cpp(current_code)
                 current_wm_code = (
-                    (current_code.get("kernel.cu") if isinstance(current_code, dict) else None)
-                    if (self.language or "").lower() == "cuda"
+                    (current_code.get("kernel.cpp") if isinstance(current_code, dict) else None)
+                    if (self.language or "").lower() in ("c", "cpp", "c++")
                     else None
                 )
                 if not isinstance(current_wm_code, str) or not current_wm_code.strip():
@@ -730,7 +730,7 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
                                 "round": int(round_num),
                                 "solution": solution.name,
                                 "language": self.language,
-                                "target_gpu": self.target_gpu,
+                                "target_cpu": self.target_gpu,
                                 "wm_enabled": True,
                             },
                         )

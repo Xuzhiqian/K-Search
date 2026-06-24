@@ -14,13 +14,13 @@ from typing import Any, Optional
 from k_search.tasks.task_base import EvalResult
 
 BASE_DIMENSIONS: tuple[str, ...] = (
-    "tiling_policy",
-    "warp_scheduling",
-    "cuda_core_usage",
-    "tensor_core_usage",
+    "algorithmic_work_reduction",
+    "cache_locality",
+    "simd_vectorization",
+    "thread_parallelism",
     "memory_bandwidth",
     "register_pressure",
-    "communication",
+    "branching_and_instruction_mix",
 )
 
 DIMENSION_ENTRY_DEFAULT: dict[str, Any] = {
@@ -851,9 +851,9 @@ def build_world_model_prompts(
     prev = (previous_world_model_json or "").strip()
 
     init_prompt = (
-        "You are a GPU kernel performance engineer.\n"
+        "You are an Armv8 CPU kernel performance engineer.\n"
         "Create an initial WORLD MODEL for the kernel problem below.\n\n"
-        f"Target GPU: {target_gpu}\n"
+        f"Target CPU: {target_gpu}\n"
         f"Language: {language}\n\n"
         "Kernel Specification:\n"
         f"{_truncate(definition_text, max_chars_per_block)}\n\n"
@@ -877,14 +877,14 @@ def build_world_model_prompts(
         "- Identify opportunities for reordering, streaming/online computation, and stable accumulation.\n\n"
         "3) Data layout & access patterns\n"
         "- For each tensor: symbolic shape, dtype, contiguous/strided/transposed vs indirect indexing.\n"
-        "- Identify dominant global reads/writes and reuse (thread/warp/block).\n"
-        "- Note what can be staged (register/shared) and what is read-once.\n\n"
+        "- Identify dominant memory reads/writes, cache-line reuse, stride patterns, and streaming behavior.\n"
+        "- Note what can stay in registers, what benefits from cache tiling, and what is read-once.\n\n"
         "4) Bottleneck hypotheses by regime (>=3 regimes)\n"
         "- Define at least 3 runtime regimes and for each: likely bottleneck (bandwidth/latency/compute/sync) and what triggers it.\n\n"
         "5) Kernel design space (knobs)\n"
         "- Enumerate tunable dimensions: mapping/parallelization, tiling, memory movement, compute strategy, numerics, special-case paths.\n\n"
         "6) High-level kernel skeleton (no code)\n"
-        "- Describe phases, what lives in registers vs shared, and where sync is needed.\n\n"
+        "- Describe phases, what lives in registers/cache, and where loop-carried dependencies or thread joins exist.\n\n"
         "7) Candidate kernel families (pruned)\n"
         "- Propose 2-3 families; for each: intended regime, tiling philosophy, memory strategy, strengths/weaknesses, primary limiter.\n\n"
         "- FORBIDDEN: implementation tactics as families (CRITICAL):\n"
@@ -901,7 +901,7 @@ def build_world_model_prompts(
         "  Populate the tree with at least 3 OPEN action nodes (nodes with no attached solution_id but with node.action.title filled).\n"
         "  These actions must be small, single-iteration implementable changes.\n"
         "  For each OPEN action node, fill action.title/action.description concisely.\n"
-        "  Avoid hardcoding implementation details like launch/grid/block dims.\n"
+        "  Avoid GPU launch/grid/block concepts; use CPU loop, cache, SIMD, and optional thread-partition concepts only.\n"
         "- Self-check for branching (REQUIRED):\n"
         "  - Whenever you create multiple sibling children under the same parent, treat them as true alternatives.\n"
         "  - In each sibling node's `notes`, add a short `SELF_CHECK` line explaining why this sibling cannot be combined with its siblings.\n"
@@ -946,7 +946,7 @@ def build_decision_tree_edit_prompt(
     """
     # Budget prompt sections explicitly so total prompt size stays bounded.
     max_chars = int(max_chars)
-    # Note: we prioritize showing more of the current code (kernel.cu) and keep other sections tighter.
+    # Note: we prioritize showing more of the current C/C++ kernel code and keep other sections tighter.
     def_cap = min(1600, max_chars)
     wm_cap = min(2600, max_chars)
     path_cap = min(800, max_chars)
@@ -959,7 +959,7 @@ def build_decision_tree_edit_prompt(
     def_s = compact_definition_for_wm_prompt(definition_text or "", max_ref_lines=40)
     pred_s = json.dumps(prediction.__dict__, ensure_ascii=False) if prediction else ""
     eval_s = json.dumps(eval_result.__dict__, ensure_ascii=False) if eval_result else ""
-    # Intentionally DO NOT summarize or truncate code here: caller should pass kernel.cu only.
+    # Intentionally DO NOT summarize or truncate code here: caller should pass the relevant kernel source only.
     # (We still keep overall prompt bounded via other sections + the LLM context window.)
     code_s = (current_code_excerpt or "").strip()
     baseline_s = (baseline_targets_text or "").strip()
@@ -1009,7 +1009,7 @@ def build_decision_tree_edit_prompt(
     return (
         "You are the WORLD MODEL module.\n"
         "Output ONLY a JSON edit script (no markdown, no extra text).\n\n"
-        f"Target GPU: {target_gpu}\nLanguage: {language}\n\n"
+        f"Target CPU: {target_gpu}\nLanguage: {language}\n\n"
         "Kernel specification (reference):\n"
         f"{def_s}\n\n"
         "Current world model (compact):\n"
@@ -1508,7 +1508,7 @@ def build_action_ranking_prompt(
     wm_compact = compact_world_model_json_for_prompt(wm, max_chars=wm_cap)
     def_s = compact_definition_for_wm_prompt(definition_text or "", max_ref_lines=35)
     eval_s = json.dumps(eval_result.__dict__, ensure_ascii=False) if eval_result else ""
-    # Intentionally DO NOT summarize or truncate code here: caller should pass kernel.cu only.
+    # Intentionally DO NOT summarize or truncate code here: caller should pass the relevant kernel source only.
     code_s = (current_code_excerpt or "").strip()
     baseline_s = (baseline_targets_text or "").strip()
     baseline_block = (
@@ -1529,29 +1529,29 @@ def build_action_ranking_prompt(
         "actions": [
             {
                 "action_id": "a1",
-                "title": "Small: change work partitioning for stage-1 (single change)",
-                "description": "Keep math identical; change only ONE partitioning choice in stage-1 and keep everything else the same.",
+                "title": "Small: change loop tiling for one hot loop",
+                "description": "Keep math identical; change only one tile size or loop order to improve L1/L2 locality.",
                 "difficulty_1_to_5": 3,
                 "base_node_id": "n12",
                 "attach_to_node_id": "pending_leaf_1",
             },
             {
                 "action_id": "a2",
-                "title": "Small: adjust warp scheduling (only) to reduce register pressure",
-                "description": "Keep sharding/layout fixed; change only warp scheduling/ordering to reduce live ranges and spills.",
+                "title": "Small: adjust unroll factor to reduce register pressure",
+                "description": "Keep layout fixed; change only unrolling or temporary lifetime to reduce spills.",
                 "difficulty_1_to_5": 2,
                 "base_node_id": "n12",
             },
             {
                 "action_id": "a3",
                 "title": "Pipeline global→shared staging",
-                "description": "Increase overlap with multi-stage staging (num_stages) and re-order loads/compute to hide memory latency; watch smem pressure.",
+                "description": "Reorder loads/compute and add conservative prefetching where it reduces memory latency without extra traffic.",
                 "base_node_id": "n12",
             },
             {
                 "action_id": "a4",
-                "title": "Memory coalescing / vectorization",
-                "description": "Re-layout or vectorize loads/stores (block pointers, alignment hints) to reduce transactions and bank conflicts.",
+                "title": "SIMD vectorization",
+                "description": "Use compiler-friendly contiguous loops or NEON intrinsics to reduce scalar instruction count.",
                 "base_node_id": "n3",
             },
             {
@@ -1582,7 +1582,7 @@ def build_action_ranking_prompt(
         "You are the WORLD MODEL module.\n"
         "Your job is to propose AND rank 5 candidate actions for what to try next.\n"
         "Do NOT rewrite the kernel prompt. Do NOT generate code.\n\n"
-        f"Target GPU: {target_gpu}\n"
+        f"Target CPU: {target_gpu}\n"
         f"Language: {language}\n\n"
         f"Current active node id: {str(current_active_node_id or '')}\n\n"
         "Kernel specification (reference; do not restate):\n"
@@ -1590,7 +1590,7 @@ def build_action_ranking_prompt(
         "Persistent World Model (COMPACT view):\n"
         f"{_truncate(wm_compact, wm_cap)}\n\n"
         f"{frontier_block}"
-        "Current implementation (kernel.cu only if CUDA; full text provided):\n"
+        "Current implementation (full relevant C/C++ source):\n"
         f"{code_s}\n\n"
         f"{baseline_block}"
         "Most recent eval_result for current code (may be empty):\n"
@@ -1628,7 +1628,7 @@ def build_action_ranking_prompt(
         "- Portfolio constraint: include at least 2 exploration/structural actions BEFORE low-level tuning.\n"
         "- At most 2 actions may be pure tuning (hardware-specific micro-tuning).\n"
         "- Each action must be single-iteration implementable and SMALL:\n"
-        "  - Prefer a single concrete tweak (one axis split OR one warp-group mapping OR one pipeline stage change OR one layout/vectorization change).\n"
+        "  - Prefer a single concrete tweak (one tile size OR one loop order OR one SIMD width/path OR one unroll/prefetch change).\n"
         "  - Avoid bundling multiple large features into one action.\n"
         "  - If you mention any hardware/ISA-specific feature, keep it to ONE minimal step and keep the rest unchanged.\n"
         "- Each action MUST include `difficulty_1_to_5` in [1..5].\n"

@@ -1,8 +1,7 @@
 """Task-agnostic types and interfaces used by kernel generators.
 
-This module intentionally contains **no** flashinfer-bench specific imports.
-Tasks (flashinfer-bench, gpu_mode, etc.) should return this shared `EvalResult`
-so generators can stay evaluator-agnostic.
+This module intentionally contains no backend-specific imports. Tasks should
+return this shared `EvalResult` so generators can stay evaluator-agnostic.
 """
 
 from __future__ import annotations
@@ -165,10 +164,8 @@ class EvalResult:
 
 class SupportedLanguages(str, Enum):
     PYTHON = "python"
-    TRITON = "triton"
-    CUDA = "cuda"
+    C = "c"
     CPP = "cpp"
-    MLX = "mlx"
 
 
 @dataclass
@@ -215,7 +212,7 @@ class Solution:
 
     def hash(self) -> str:
         """
-        Deterministic content hash (matches flashinfer-bench's intent; sha1 over key behavior fields).
+        Deterministic content hash over key behavior fields.
         """
         h = hashlib.sha1()
         deps = list(self.spec.dependencies or [])
@@ -259,26 +256,26 @@ class Solution:
 def code_from_solution(language: str, solution: Solution) -> tuple[Any, Any]:
     """
     Convert a task_base.Solution back into (current_code, current_raw_code) expected by generators:
-    - For CUDA: return ({path: content} dict, reconstructed XML blocks string)
-    - For Triton/Python: return (entry_source_content, entry_source_content)
+    - For C/C++: return ({path: content} dict, reconstructed XML blocks string)
+    - For Python: return (entry_source_content, entry_source_content)
     """
     lang = str(language or "").strip().lower()
-    if lang == "cuda":
+    if lang in ("c", "cpp", "c++"):
         code_dict: Dict[str, str] = {sf.path: sf.content for sf in (solution.sources or [])}
 
         def _xml_block(tag: str, name: str, content: str) -> str:
             return f"<{tag} name=\"{name}\">\n{content}\n</{tag}>"
 
         h = code_dict.get("kernel.h", "")
-        cu = code_dict.get("kernel.cu", "")
-        cpp = code_dict.get("main.cpp", "")
+        kernel_cpp = code_dict.get("kernel.cpp", "")
+        main_cpp = code_dict.get("main.cpp", "")
         parts: list[str] = []
         if h:
             parts.append(_xml_block("header_file", "kernel.h", h))
-        if cu:
-            parts.append(_xml_block("cuda_file", "kernel.cu", cu))
-        if cpp:
-            parts.append(_xml_block("cpp_file", "main.cpp", cpp))
+        if kernel_cpp:
+            parts.append(_xml_block("source_file", "kernel.cpp", kernel_cpp))
+        if main_cpp:
+            parts.append(_xml_block("main_file", "main.cpp", main_cpp))
         current_raw_code = "\n\n".join(parts) if parts else ""
         return code_dict, current_raw_code
 
@@ -377,10 +374,9 @@ def solution_from_json_dict(d: dict[str, Any]) -> Solution:
     lang_s = str(spec.get("language", "") or "").strip().lower()
     lang_map = {
         "python": SupportedLanguages.PYTHON,
-        "triton": SupportedLanguages.TRITON,
-        "cuda": SupportedLanguages.CUDA,
         "cpp": SupportedLanguages.CPP,
-        "mlx": SupportedLanguages.MLX,
+        "c++": SupportedLanguages.CPP,
+        "c": SupportedLanguages.C,
     }
     lang = lang_map.get(lang_s, SupportedLanguages.PYTHON)
 
