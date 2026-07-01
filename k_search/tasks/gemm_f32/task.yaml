@@ -1,0 +1,136 @@
+name: gemm_f32_128
+
+description: >
+  Optimize fixed-size row-major FP32 GEMM C = A * B for Armv8/AArch64.
+  M=4608,N=1792,K=1152. A, B, and C do not alias.
+
+signature: >
+  extern "C" void kernel_entry(
+    const float* A,
+    const float* B,
+    float* C);
+
+constraints:
+  dtype: float32
+  layout: row_major
+  M: 4608
+  N: 1792
+  K: 1152
+  tolerance: 0.001
+  fixed_shape: true
+
+allow_threads: false
+
+allowed_includes:
+  - arm_neon.h
+  - cstddef
+  - cstdint
+  - algorithm
+
+reference_source: |
+  for (int i = 0; i < 4608; ++i) {
+    for (int j = 0; j < 1792; ++j) {
+      float sum = 0.0f;
+      for (int k = 0; k < 1152; ++k) {
+        sum += A[i * 1152 + k] * B[k * 1792 + j];
+      }
+      C[i * 1792 + j] = sum;
+    }
+  }
+
+harness_source: |
+  #include "kernel.h"
+
+  #include <algorithm>
+  #include <chrono>
+  #include <cmath>
+  #include <cstdio>
+  #include <random>
+  #include <vector>
+
+  constexpr int M = 4608;
+  constexpr int N = 1792;
+  constexpr int K = 1152;
+
+  static void reference_gemm(
+      const float* A,
+      const float* B,
+      float* C) {
+    for (int i = 0; i < M; ++i) {
+      for (int j = 0; j < N; ++j) {
+        float sum = 0.0f;
+        for (int k = 0; k < K; ++k) {
+          sum += A[i * K + k] * B[k * N + j];
+        }
+        C[i * N + j] = sum;
+      }
+    }
+  }
+
+  template <typename Fn>
+  static double benchmark(Fn fn, int warmup, int iterations) {
+    for (int i = 0; i < warmup; ++i) {
+      fn();
+    }
+
+    std::vector<double> samples;
+    samples.reserve(iterations);
+
+    for (int i = 0; i < iterations; ++i) {
+      const auto start = std::chrono::steady_clock::now();
+      fn();
+      const auto end = std::chrono::steady_clock::now();
+
+      samples.push_back(
+          std::chrono::duration<double, std::milli>(
+              end - start).count());
+    }
+
+    std::sort(samples.begin(), samples.end());
+    return samples[samples.size() / 2];
+  }
+
+  int main() {
+    std::vector<float> A(M * K);
+    std::vector<float> B(K * N);
+    std::vector<float> expected(M * N);
+    std::vector<float> actual(M * N);
+
+    std::mt19937 rng(12345);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+
+    for (float& x : A) x = dist(rng);
+    for (float& x : B) x = dist(rng);
+
+    reference_gemm(A.data(), B.data(), expected.data());
+    kernel_entry(A.data(), B.data(), actual.data());
+
+    float max_error = 0.0f;
+    for (int i = 0; i < M * N; ++i) {
+      max_error = std::max(
+          max_error,
+          std::abs(expected[i] - actual[i]));
+    }
+
+    if (max_error > 0.001f) {
+      std::printf("KSEARCH_STATUS=failed\n");
+      std::printf("KSEARCH_LOG=max_error=%g\n", max_error);
+      return 1;
+    }
+
+    const double reference_ms = benchmark(
+        [&] { reference_gemm(A.data(), B.data(), expected.data()); },
+        5,
+        30);
+
+    const double kernel_ms = benchmark(
+        [&] { kernel_entry(A.data(), B.data(), actual.data()); },
+        10,
+        100);
+
+    std::printf("KSEARCH_STATUS=passed\n");
+    std::printf("KSEARCH_KERNEL_MS=%.9f\n", kernel_ms);
+    std::printf("KSEARCH_REFERENCE_MS=%.9f\n", reference_ms);
+    std::printf("KSEARCH_LOG=max_error=%g\n", max_error);
+    return 0;
+  }
