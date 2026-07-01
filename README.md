@@ -1,5 +1,5 @@
 # K-Search
-
+<!-- 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 -->
 K-Search is an LLM-driven kernel engineering loop for Armv8/AArch64 CPU kernels. It generates C/C++ implementations, evaluates them with a task-provided CPU harness, and iteratively improves them with an optional co-evolving world model.
 
 The current codebase targets pure CPU platforms. CUDA, Triton, FlashInfer, GPUMode, KernelBench, MLX, Metal, GPU benchmark assets, and GPU baseline integrations have been removed.
